@@ -11,8 +11,8 @@ from django.views.generic import TemplateView
 from django.views.generic.detail import SingleObjectMixin
 
 from wagtail.actions.copy_for_translation import CopyPageForTranslationAction
-from wagtail.models import DraftStateMixin, Page, TranslatableMixin
-from wagtail.snippets.views.snippets import get_snippet_model_from_url_params
+from wagtail.models import DraftStateMixin, Page, TranslatableMixin, Revision
+from wagtail.snippets.views.snippets import get_snippet_model_from_url_params, HistoryView
 
 from .forms import SubmitTranslationForm
 
@@ -159,3 +159,32 @@ class SubmitSnippetTranslationView(SubmitTranslationView):
             "object": str(self.object),
             "locales": locales,
         }
+    
+class SnippetHistoryView(HistoryView):
+    """
+    Custom history view for translatable snippets that properly handles locale filtering
+    """
+    def get_queryset(self):
+        queryset = super().get_queryset()
+
+        #Check if the snippets is translatable
+        if hasattr(self.object, 'locale_id'):
+            # Get the content type of the snippet
+            content_type = self.object.get_content_type()
+
+            # Filter revisions by content type and object ID
+            queryset = Revision.objects.filter(
+                content_type=content_type,
+                object_id=self.object.pk
+            ).order_by('-created_at')
+
+        return queryset
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+
+        # Add translation form to context if the snippet is translatable
+        if hasattr(self.object, 'locale_id'):
+            context["submit_translation_form"] = SubmitTranslationForm(self.object)
+        
+        return context

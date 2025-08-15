@@ -1,11 +1,11 @@
+import pytest
 from django.contrib.admin.utils import quote
 from django.contrib.auth.models import Group, Permission
 from django.contrib.contenttypes.models import ContentType
 from django.http import Http404
-from django.test import RequestFactory, override_settings
+from django.test import RequestFactory, override_settings, TestCase
 from django.urls import reverse
 from django.utils.translation import gettext_lazy
-
 from wagtail import hooks
 from wagtail.actions.copy_for_translation import ParentNotTranslatedError
 from wagtail.contrib.simple_translation.forms import SubmitTranslationForm
@@ -15,12 +15,16 @@ from wagtail.contrib.simple_translation.views import (
     SubmitSnippetTranslationView,
     SubmitTranslationView,
 )
-from wagtail.models import Locale, Page
+from wagtail.models import Locale, Page, Revision, TranslatableMixin, DraftStateMixin, RevisionMixin
 from wagtail.test.i18n.models import TestPage
 from wagtail.test.snippets.models import TranslatableSnippet
 from wagtail.test.testapp.models import FullFeaturedSnippet
 from wagtail.test.utils import TestCase, WagtailTestUtils
-
+from django.contrib.auth.models import User
+from django.db import models
+from wagtail.snippets.models import register_snippet
+from wagtail.test.utils import WagtailTestUtils
+from wagtail.contrib.simple_translation.views import SnippetHistoryView
 
 @override_settings(
     LANGUAGES=[
@@ -438,3 +442,57 @@ class TestPageTreeSync(WagtailTestUtils, TestCase):
 
         self.assertFalse(en_blog_index.has_translation(self.fr_locale))
         self.assertFalse(en_blog_index.has_translation(self.de_locale))
+
+# Model of Test
+@register_snippet
+class MyTranslatableSnippet(TranslatableMixin, DraftStateMixin, RevisionMixin, models.Model):
+    title = models.CharField(max_length=255)
+
+    def __str__(self):
+        return self.title
+    
+    class Meta:
+        verbose_name = "Test Translatable Snippet"
+
+
+# Test
+class SnippetHistoryViewTest(WagtailTestUtils, TestCase):
+    def setUp(self):
+        self.user = self.create_superuser(
+            username='testuser',
+            email='test@email.com',
+            password='password'
+        )
+
+        # create instance of test model
+        self.snippet = MyTranslatableSnippet.objects.create(title="Test Snippet")
+        self.revision = Revision.objects.crate(content_object=self.snippet)
+
+    def test_history_view_with_translatable_snippet(self):
+        request = RequestFactory().get('/dummy-url/')
+        request.user = self.user
+
+        view = SnippetHistoryView()
+        view.setup(request,
+                   app_label='simple_translation',
+                   model_name='mytranslatablesnippet',
+                   pk=self.snippet.pk)
+        view.object = self.snippet
+
+        response = view.dispatch(request)
+        self.assertEqual(response.status_code, 200)
+
+    def test_queryset_filtering(self):
+        view = SnippetHistoryView()
+        view.object = self.snippet
+
+        queryset = view.get_queryset()
+        self.assertEqual(queryset.count(), 1)
+        self.assertEqual(queryset.first(), self.revision)
+
+    def test_context_has_translation_form(self):
+        view = SnippetHistoryView()
+        view.object = self.snippet
+
+        context = view.get_context_data()
+        self.assertIn('submit_translation_form', context)
